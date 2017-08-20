@@ -187,12 +187,10 @@ namespace IoTCampTpm
             currentTelemetryConfig["status"] = "Success";
             currentTelemetryConfig["pendingConfig"] = null;
 
+            //Cancel and reset out perdioc timer
             sendFrequency = currentTelemetryConfig["sendFrequency"];
             timer.Cancel();
-
             timer = ThreadPoolTimer.CreatePeriodicTimer(Timer_Tick, TimeSpan.FromSeconds(sendFrequency));
-
-            //TODO: Add a way to change the default ThreadPoolTimer...
 
             await deviceClient.UpdateReportedPropertiesAsync(reportedProperties);
         }
