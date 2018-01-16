@@ -8,6 +8,8 @@ using Microsoft.Azure.Devices.Client;
 using Microsoft.Azure.Devices.Shared;
 using Microsoft.Devices.Tpm;
 using System.Diagnostics;
+using GrovePi;
+using GrovePi.Sensors;
 
 namespace IoTCampTpm
 {
@@ -16,9 +18,11 @@ namespace IoTCampTpm
         static BackgroundTaskDeferral deferral;
         static ThreadPoolTimer timer;
         static DeviceClient deviceClient;
-        static string deviceId;
         static int sendFrequency = 5;
 
+        static string deviceId = "{Place device ID here}";
+        static string iotHubUri = "{Place Hub Uri Here}";
+        static string deviceKey = "{Place IoT Hub Device Key Here}";
 
         ///**********************************************
         //    Placeholder: Add a Tpm Device object
@@ -39,13 +43,16 @@ namespace IoTCampTpm
             ///**********************************************
             //    Placeholder: Using the TPM chip in code
             //***********************************************/
-            tpmDevice = new TpmDevice(0); // Use logical device 0 on the TPM
+            tpmDevice = new TpmDevice(0);
             string hubUri = tpmDevice.GetHostName();
             string sasToken = tpmDevice.GetSASToken();
-            deviceId = tpmDevice.GetDeviceId();
+            
+            //Not using during this workshop due to bug in TPM library
+            //deviceId = tpmDevice.GetDeviceId();
+            //deviceClient = DeviceClient.Create(hubUri, AuthenticationMethodFactory.CreateAuthenticationWithToken(deviceId, sasToken), TransportType.Amqp);
 
-            deviceClient = DeviceClient.Create(hubUri, AuthenticationMethodFactory.
-                    CreateAuthenticationWithToken(deviceId, sasToken), TransportType.Amqp);
+            //Use this to get over the TPM bug in the build
+            deviceClient = DeviceClient.Create(iotHubUri, new DeviceAuthenticationWithRegistrySymmetricKey(deviceId, deviceKey), TransportType.Mqtt);
 
 
             ///**********************************************
@@ -61,7 +68,6 @@ namespace IoTCampTpm
 
             deviceClient.SetDesiredPropertyUpdateCallbackAsync(OnDesiredPropertyChanged, null).Wait();
 
-
             timer = ThreadPoolTimer.CreatePeriodicTimer(Timer_Tick, TimeSpan.FromSeconds(sendFrequency));
         }
 
@@ -71,28 +77,35 @@ namespace IoTCampTpm
         //***********************************************/
         public static async void Timer_Tick(ThreadPoolTimer timer)
         {
-            SendDeviceToCloudMessagesAsync();
-            ReceiveC2dAsync();
+            byte rgbVal;
+            double currentTemp;
+
+            //Update the LCD screen
+            DeviceFactory.Build.Buzzer(Pin.DigitalPin2).ChangeState(SensorStatus.Off);
+
+            rgbVal = Convert.ToByte(DeviceFactory.Build.RotaryAngleSensor(Pin.AnalogPin2).SensorValue() / 4);
+
+            currentTemp = DeviceFactory.Build.TemperatureAndHumiditySensor(Pin.AnalogPin1, Model.Dht11).TemperatureInCelsius();
+            currentTemp = ConvertTemp.ConvertCelsiusToFahrenheit(currentTemp);
+
+            DeviceFactory.Build.RgbLcdDisplay().SetText("Temp: " + currentTemp.ToString("F") + "     Now:  " + DateTime.Now.ToString("H:mm:ss")).SetBacklightRgb(124, rgbVal, 65);
+
+            //Send telemetry to the cloud
+            await SendDeviceToCloudMessagesAsync(currentTemp, 32);
+            await ReceiveC2dAsync();
         }
 
 
         /**********************************************
         Placeholder: SendDeviceToCloudMessageAsnyc
         ***********************************************/
-        private static async void SendDeviceToCloudMessagesAsync()
+        private static async Task SendDeviceToCloudMessagesAsync(double Temperature, double Humidity)
         {
-            double minTemperature = 20;
-            double minHumidity = 60;
-            Random rand = new Random();
-
-            double currentTemperature = minTemperature + rand.NextDouble() * 15;
-            double currentHumidity = minHumidity + rand.NextDouble() * 20;
-
             var telemetryDataPoint = new
             {
                 deviceId = deviceId,
-                temperature = currentTemperature,
-                humidity = currentHumidity
+                temperature = Temperature.ToString("F"),
+                humidity = Humidity
             };
 
             string messageString = JsonConvert.SerializeObject(telemetryDataPoint);
@@ -100,13 +113,13 @@ namespace IoTCampTpm
 
             await deviceClient.SendEventAsync(message);
 
-            Debug.WriteLine("{0} > Sent message: {1}", DateTime.Now, messageString);
+            Console.WriteLine("{0} > Sent message: {1}", DateTime.Now, messageString);
         }
 
         /**********************************************
         Placeholder: Receive cloud to device message
         ***********************************************/
-        private static async void ReceiveC2dAsync()
+        private static async Task ReceiveC2dAsync()
         {
             Message receivedMessage = await deviceClient.ReceiveAsync();
 
